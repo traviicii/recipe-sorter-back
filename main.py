@@ -5,8 +5,20 @@ import io
 import PyPDF2
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+# Server command
+# fastapi dev main.py
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # can restrict to frontend domain specifically ["https://your-frontend-domain.com"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def extract_text_from_pdf(file_data: bytes) -> str:
     pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_data))
@@ -30,7 +42,7 @@ def determine_cooking_method(instructions: str) -> str:
     elif "no cook" in lower_text or "raw" in lower_text:
         return "No Cook"
     else:
-        # If none match, you could either return a default or "Other"
+        # If none match, could either return a default or "Other"
         return "Other"
 
 def parse_recipes(full_text: str) -> list:
