@@ -1,161 +1,103 @@
-from typing import Union
-
-import re
-import io
-import PyPDF2
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-
 # Server command
 # fastapi dev main.py
+import io
+import os
+import re
+import json
+import pdfplumber
+from openai import OpenAI
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import traceback
+
+from dotenv import load_dotenv
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # can restrict to frontend domain specifically ["https://your-frontend-domain.com"]
+    allow_origins=["*"],  # You can restrict this to your frontend domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-def extract_text_from_pdf(file_data: bytes) -> str:
-    pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_data))
-    full_text = ""
-    for page in pdf_reader.pages:
-        text = page.extract_text()
-        if text:
-            full_text += text + "\n"
-    return full_text
+def convert_pdf_to_text(pdf_bytes: bytes) -> str:
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            return "\n\n".join(page.extract_text() or "" for page in pdf.pages)
+    except Exception as e:
+        raise RuntimeError(f"Failed to extract text from PDF: {e}")
 
-def determine_cooking_method(instructions: str) -> str:
-    lower_text = instructions.lower()
-    if "oven" in lower_text:
-        return "Oven"
-    elif "stovetop" in lower_text or "skillet" in lower_text:
-        return "Stovetop"
-    elif "air fryer" in lower_text:
-        return "Air Fryer"
-    elif "blender" in lower_text:
-        return "Blender"
-    elif "no cook" in lower_text or "raw" in lower_text:
-        return "No Cook"
-    else:
-        # If none match, could either return a default or "Other"
-        return "Other"
+def get_structured_recipes_from_openai(pdf_text: str) -> list:
+    prompt = f"""
+You are a nutritionist and software engineer helping to extract structured data from recipe PDFs.
 
-def parse_recipes(full_text: str) -> list:
-    recipes = []
-    # Split on the URL delimiter.
-    blocks = full_text.split("https://bevictoriouscoaching.com/")
-    blocks = [block.strip() for block in blocks if block.strip()]
-    
-    for block in blocks:
-        lines = [line.strip() for line in block.splitlines() if line.strip()]
-        if len(lines) < 6:
-            continue
+Please parse the following raw text into a JSON array of recipe objects with this structure:
 
-        title = lines[0]
-        prep_time_str = lines[1]
-        try:
-            prepTime = int(prep_time_str.split()[0])
-        except ValueError:
-            prepTime = 0
+[
+  {{
+    "title": "Recipe Name",
+    "prepTime": 10,
+    "ingredients": ["item 1", "item 2"],
+    "ingredientCount": 2,
+    "calories": 300,
+    "protein": 25,
+    "fat": 10,
+    "saturatedFat": 3,
+    "fiber": 5,
+    "instructions": "Full cooking instructions...",
+    "cookingMethod": "Oven"
+  }}
+]
+Within the raw text, there may be keywords missing like "protein" or "fat"- Do your best to reason which numbers belong to which macro nutrient values.
+Return only the JSON array. Here's the raw text from the PDF:
+---
+{pdf_text}
+---
+"""
 
-        ingredient_lines = []
-        i = 2
-        while i < len(lines) and not lines[i].isdigit():
-            ingredient_lines.append(lines[i])
-            i += 1
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
 
-        if i >= len(lines):
-            continue
+    raw_content = response.choices[0].message.content.strip()
 
-        try:
-            calories = int(lines[i])
-        except ValueError:
-            calories = 0
-        i += 1
+    # Extract JSON array using regex (robust to markdown wrapping or notes)
+    match = re.search(r"\[\s*{.*?}\s*\]", raw_content, re.DOTALL)
+    if not match:
+        print("\n--- RAW RESPONSE FROM OPENAI ---\n", raw_content)
+        raise ValueError("OpenAI output did not contain a valid JSON array.")
 
-        protein_str = lines[i].replace("g", "").strip() if i < len(lines) else "0"
-        try:
-            protein = int(protein_str)
-        except ValueError:
-            protein = 0
-        i += 1
+    json_text = match.group(0)
 
-        def get_nutrition(label: str, idx: int):
-            if idx < len(lines) and lines[idx].lower().startswith(label.lower()):
-                if idx + 1 < len(lines):
-                    val_str = lines[idx + 1].replace("g", "").strip()
-                    try:
-                        return int(val_str), idx + 2
-                    except ValueError:
-                        return 0, idx + 2
-            return 0, idx
-
-        saturatedFat, i = get_nutrition("Saturated", i)
-        transFat, i = get_nutrition("Trans", i)
-        polyFat, i = get_nutrition("Polyunsaturated", i)
-        monoFat, i = get_nutrition("Monounsaturated", i)
-
-        fat = 0
-        if i < len(lines) and re.match(r"^\d+g$", lines[i]):
-            try:
-                fat = int(lines[i].replace("g", ""))
-            except ValueError:
-                fat = 0
-            i += 1
-
-        fiber, i = get_nutrition("Fiber", i)
-        
-        nutritionLabels = {"Sugar", "Sodium", "Calcium", "Iron", "Folate", "Zinc", "Selenium"}
-        numeric_pattern = re.compile(r"^\d+(?:g|mg|µg)$")
-        while i < len(lines) and (lines[i] in nutritionLabels or numeric_pattern.match(lines[i])):
-            i += 1
-
-        full_instructions = "\n".join(lines[i:]) if i < len(lines) else ""
-        simple_method = determine_cooking_method(full_instructions)
-        
-        recipe = {
-            "title": title,
-            "prepTime": prepTime,
-            "ingredients": ingredient_lines,
-            "ingredientCount": len(ingredient_lines),
-            "calories": calories,
-            "protein": protein,
-            "saturatedFat": saturatedFat,
-            "transFat": transFat,
-            "polyFat": polyFat,
-            "monoFat": monoFat,
-            "fat": fat,
-            "fiber": fiber,
-            "instructions": full_instructions,
-            "cookingMethod": simple_method,  # This field now matches your filtering options.
-        }
-        recipes.append(recipe)
-    
-    return recipes
+    try:
+        return json.loads(json_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"OpenAI returned invalid JSON: {e}")
 
 @app.post("/parse-recipes")
 async def parse_recipes_endpoint(file: UploadFile = File(...)):
-    print("Received file:", file, type(file))
-    if not hasattr(file, "content_type"):
-        raise HTTPException(status_code=400, detail="Uploaded file is not valid.")
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Invalid file type. PDF required.")
-    
+    if not file.content_type or not file.content_type.endswith("pdf"):
+        raise HTTPException(status_code=400, detail="PDF required.")
+
     try:
         file_data = await file.read()
-        full_text = extract_text_from_pdf(file_data)
-        recipes_data = parse_recipes(full_text)
-        # print("Full Text: ", full_text)
-        # print("Recipe Data: ", recipes_data)
-        if not recipes_data:
-            raise ValueError("No recipes found; please check the PDF format.")
+        pdf_text = convert_pdf_to_text(file_data)
+
+        print("\n\n--- Extracted PDF Text Preview ---\n", pdf_text[:500], "\n--------------------\n")
+
+        structured_recipes = get_structured_recipes_from_openai(pdf_text)
+
+        return JSONResponse(content={"recipes": structured_recipes})
+
     except Exception as e:
-        print("Error processing PDF:", e)
-        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
-    
-    return JSONResponse(content={"recipes": recipes_data})
+        print("\n\n--- ERROR CAUGHT ---")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Parsing failed: {e}")
