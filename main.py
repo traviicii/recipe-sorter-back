@@ -54,7 +54,7 @@ Please parse the following raw text into a JSON array of recipe objects with thi
     "cookingMethod": "Oven"
   }}
 ]
-Within the raw text, there may be keywords missing like "protein" or "fat"- Do your best to reason which numbers belong to which macro nutrient values.
+Within the raw text, there may be keywords missing like "protein" or "fat"- Do your best to reason which numbers belong to which macro nutrient values. If you see a recipe for overnight oats, make the prep time value 0.
 Return only the JSON array. Here's the raw text from the PDF:
 ---
 {pdf_text}
