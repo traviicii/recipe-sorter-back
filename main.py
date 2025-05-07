@@ -82,6 +82,10 @@ Return only the JSON array. Here's the raw text from the PDF:
     except json.JSONDecodeError as e:
         raise ValueError(f"OpenAI returned invalid JSON: {e}")
 
+@app.get("/")
+async def Home():
+    return JSONResponse(content={"status": "ok"})
+
 @app.post("/parse-recipes")
 async def parse_recipes_endpoint(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.endswith("pdf"):
