@@ -25,10 +25,19 @@ load_dotenv()
 app = FastAPI()
 
 
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "https://recipe-sorter-front.onrender.com",
+]
+
+
 cors_allow_all = os.getenv("CORS_ALLOW_ALL", "false").lower() == "true"
 cors_origins_env = os.getenv(
     "CORS_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    ",".join(DEFAULT_CORS_ORIGINS),
 )
 cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
 if cors_allow_all:
