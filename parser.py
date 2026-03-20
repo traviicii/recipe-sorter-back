@@ -267,6 +267,22 @@ def _notify(progress_cb: ProgressCallback, message: str, percent: int) -> None:
         progress_cb(message, percent)
 
 
+def release_pdf_page_resources(page: Any) -> None:
+    flush_cache = getattr(page, "flush_cache", None)
+    if callable(flush_cache):
+        try:
+            flush_cache()
+        except Exception:
+            pass
+
+    close_page = getattr(page, "close", None)
+    if callable(close_page):
+        try:
+            close_page()
+        except Exception:
+            pass
+
+
 def extract_pdf_text_pages(
     pdf_bytes: bytes,
     progress_cb: ProgressCallback = None,
@@ -284,22 +300,25 @@ def extract_pdf_text_pages(
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         total_pages = len(pdf.pages)
         for idx, page in enumerate(pdf.pages):
-            raw_text = page.extract_text() or ""
-            cleaned = clean_text(raw_text)
-            word_count = len(re.findall(r"\b\w+\b", cleaned))
-            alpha_ratio = compute_alpha_ratio(cleaned)
-            score = score_page_text(cleaned, word_count, alpha_ratio)
-            pages.append(
-                PageText(
-                    index=idx,
-                    text=cleaned,
-                    word_count=word_count,
-                    alpha_ratio=alpha_ratio,
-                    score=score,
-                    source="pdf_text",
+            try:
+                raw_text = page.extract_text() or ""
+                cleaned = clean_text(raw_text)
+                word_count = len(re.findall(r"\b\w+\b", cleaned))
+                alpha_ratio = compute_alpha_ratio(cleaned)
+                score = score_page_text(cleaned, word_count, alpha_ratio)
+                pages.append(
+                    PageText(
+                        index=idx,
+                        text=cleaned,
+                        word_count=word_count,
+                        alpha_ratio=alpha_ratio,
+                        score=score,
+                        source="pdf_text",
+                    )
                 )
-            )
-            _notify(progress_cb, f"Reading page {idx + 1}/{total_pages}", 10 + int(15 * ((idx + 1) / max(1, total_pages))))
+                _notify(progress_cb, f"Reading page {idx + 1}/{total_pages}", 10 + int(15 * ((idx + 1) / max(1, total_pages))))
+            finally:
+                release_pdf_page_resources(page)
 
     if not pages:
         return pages
