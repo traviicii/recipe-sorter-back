@@ -1,3 +1,6 @@
 /.env
-test.py
-./__pycache__
+/pycache/*
+__pycache__
+/artifacts
+/data
+.DS_Store
