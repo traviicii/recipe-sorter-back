@@ -3,4 +3,5 @@
 __pycache__
 /artifacts
 /data
+/samples/*.pdf
 .DS_Store
