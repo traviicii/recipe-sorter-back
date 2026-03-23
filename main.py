@@ -15,6 +15,7 @@ from collection_service import (
     parse_collection_job,
     public_collection,
     public_recipe,
+    start_failed_recipe_retry,
     start_enrichment,
 )
 from parser import parse_recipes_pdf
@@ -184,6 +185,32 @@ async def get_collection_recipes(collection_id: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail="Collection not found.")
     recipes = [public_recipe(recipe, collection) for recipe in load_recipes(collection_id)]
     return JSONResponse(content={"recipes": recipes})
+
+
+@app.post("/collections/{collection_id}/retry-failed")
+async def retry_failed_recipes(collection_id: str, background_tasks: BackgroundTasks) -> JSONResponse:
+    collection = load_collection(collection_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail="Collection not found.")
+    if collection.get("status") in {"queued", "processing"}:
+        raise HTTPException(status_code=409, detail="Parsing is already in progress for this collection.")
+    if collection.get("failedRecipes", 0) <= 0:
+        raise HTTPException(status_code=409, detail="No failed recipes are available to retry.")
+
+    job = start_failed_recipe_retry(collection_id)
+    if job is None:
+        raise HTTPException(status_code=409, detail="No failed recipes are available to retry.")
+
+    collection = load_collection(collection_id) or collection
+    background_tasks.add_task(parse_collection_job, collection_id, job["id"])
+
+    return JSONResponse(
+        content={
+            "collection": public_collection(collection),
+            "job": public_job(job),
+            "started": True,
+        }
+    )
 
 
 @app.post("/collections/{collection_id}/enrich")

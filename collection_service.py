@@ -1083,6 +1083,27 @@ def enrich_collection_job(collection_id: str, job_id: str) -> None:
             )
 
 
+def start_failed_recipe_retry(collection_id: str) -> Optional[Dict[str, Any]]:
+    collection = load_collection(collection_id)
+    if collection is None:
+        return None
+
+    recipes = load_recipes(collection_id)
+    if not any(recipe.get("macroStatus") == "failed" for recipe in recipes):
+        return None
+
+    job = create_job(collection_id, "macro_parse_retry")
+    collection["status"] = "queued"
+    collection["step"] = "queued"
+    collection["progress"] = 0
+    collection["macroStatus"] = "queued"
+    collection["error"] = None
+    collection["reused"] = False
+    collection["lastJobId"] = job["id"]
+    save_collection(collection)
+    return job
+
+
 def start_enrichment(collection_id: str) -> Optional[Dict[str, Any]]:
     collection = load_collection(collection_id)
     if collection is None:
